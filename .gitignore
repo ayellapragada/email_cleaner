@@ -1,0 +1,18 @@
+# OAuth + tool state — never commit
+credentials.json
+token.yaml
+unsubscribed.yaml
+unsubscribe.log
+trash.log
+triage.log
+
+# Ruby
+*.gem
+.bundle/
+vendor/bundle/
+Gemfile.lock
+
+# Editors
+.DS_Store
+.idea/
+.vscode/
