@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "date"
+require_relative "auto_read_state"
 require_relative "browser"
 require_relative "gmail_client"
 require_relative "log_writer"
@@ -26,20 +27,23 @@ module EmailCleaner
   module TriageCommand
     module_function
 
-    def run(options:, gmail_service:, state:, log_path:, io: $stdout, stdin: $stdin, progress: $stderr)
-      snapshot = build_snapshot(options, gmail_service, state, progress)
+    def run(options:, gmail_service:, state:, log_path:, auto_read_path:,
+            io: $stdout, stdin: $stdin, progress: $stderr)
+      snapshot = build_snapshot(options, gmail_service, state, progress, query_override: nil)
 
       if snapshot.empty?
         io.puts "Nothing to triage. Inbox is clean (or fully decided)."
         return 0
       end
 
+      auto_read = AutoReadState.new(path: auto_read_path)
+
       total_msgs = snapshot.sum(&:count)
       io.puts Pretty.bold("Triaging #{snapshot.size} senders representing #{total_msgs} messages.")
       io.puts Pretty.dim("Type ? for help, q to quit.")
       io.puts
 
-      decisions = { unsub: [], done: [], keep: [], trash: [], skip: [] }
+      decisions = { unsub: [], done: [], keep: [], trash: [], skip: [], auto_read: [] }
       total_trashed = 0
 
       LogWriter.open(log_path, command: "triage") do |log|
@@ -48,7 +52,7 @@ module EmailCleaner
         snapshot.each_with_index do |stats, idx|
           render_sender(stats, idx + 1, snapshot.size, io)
 
-          choice, trashed_this_step = prompt_and_act(stats, gmail_service, state, log, io, stdin, progress)
+          choice, trashed_this_step = prompt_and_act(stats, gmail_service, state, auto_read, log, io, stdin, progress)
 
           if choice == :quit
             state.save
@@ -72,10 +76,17 @@ module EmailCleaner
 
     # Returns [choice_symbol, trashed_count]. Loops on unrecognized
     # input. Returns [:quit, 0] if the user typed q (or EOF).
-    def prompt_and_act(stats, gmail, state, log, io, stdin, progress)
+    def prompt_and_act(stats, gmail, state, auto_read, log, io, stdin, progress)
       loop do
-        io.print Pretty.cyan("[u/m/k/t/s/q/?]") + " > "
-        answer = (stdin.gets || "q").strip.downcase
+        io.print Pretty.cyan("[u/m/k/t/s/r/R/q/?]") + " > "
+        answer = stdin.gets || "q"
+        answer_raw = answer.strip
+        answer = answer_raw.downcase
+
+        case answer_raw
+        when "R"
+          handle_auto_read_domain(stats, auto_read, log, io); return [:auto_read, 0]
+        end
 
         case answer
         when "u"         then return [:unsub, handle_unsub_and_trash(stats, gmail, state, log, io, progress)]
@@ -83,20 +94,38 @@ module EmailCleaner
         when "k"         then handle_keep(stats, state, log, io); return [:keep, 0]
         when "t"         then return [:trash, trash_backlog(stats, gmail, log, io, progress)]
         when "s"         then handle_skip(stats, log, io); return [:skip, 0]
+        when "r"         then handle_auto_read_addr(stats, auto_read, log, io); return [:auto_read, 0]
         when "q", ""     then handle_quit(log, io); return [:quit, 0]
         when "?", "help" then print_help(io)
         else
-          io.puts "  " + Pretty.dim("unrecognized: '#{answer}' — type ? for help")
+          io.puts "  " + Pretty.dim("unrecognized: '#{answer_raw}' — type ? for help")
         end
       end
     end
 
+    def handle_auto_read_addr(stats, auto_read, log, io)
+      addr = stats.sender.address
+      auto_read.add(addr)
+      auto_read.save
+      log.write("auto_read_addr", addr, "ok")
+      io.puts "  " + Pretty.green("auto-read: #{addr} (run `auto-read sync` to apply)")
+    end
+
+    def handle_auto_read_domain(stats, auto_read, log, io)
+      addr = stats.sender.address
+      domain = addr.split("@", 2).last.to_s.downcase
+      auto_read.add_domain(domain)
+      auto_read.save
+      log.write("auto_read_domain", domain, "ok")
+      io.puts "  " + Pretty.green("auto-read domain: @#{domain} (run `auto-read sync` to apply)")
+    end
+
     # Audit-actionable senders that haven't yet been decided. Reuses the
     # shared Snapshot.all_senders pipeline plus per-triage filtering.
-    def build_snapshot(options, gmail_service, state, progress)
+    def build_snapshot(options, gmail_service, state, progress, query_override: nil)
       stats = Snapshot.all_senders(
         days: options[:days], gmail_service: gmail_service,
-        state: state, progress: progress
+        state: state, progress: progress, query_override: query_override
       )
       min = options[:min] || EmailCleaner::DEFAULT_MIN_COUNT
       stats.select do |s|
@@ -231,6 +260,8 @@ module EmailCleaner
         #{Pretty.bold('k')} — keep #{EmailCleaner::DEFAULT_KEEP_DAYS}d (auto-resurfaces after that)
         #{Pretty.bold('t')} — trash backlog only (no state change)
         #{Pretty.bold('s')} — skip (no state change, reappears next run)
+        #{Pretty.bold('r')} — auto-read this address (local only; run `auto-read sync` to apply)
+        #{Pretty.bold('R')} — auto-read whole domain (local only; run `auto-read sync` to apply)
         #{Pretty.bold('q')} — quit (state is saved)
       HELP
     end
@@ -250,16 +281,18 @@ module EmailCleaner
         "#{decisions[:done].size} done",
         "#{decisions[:keep].size} keep",
         "#{decisions[:trash].size} trash",
-        "#{decisions[:skip].size} skip"
+        "#{decisions[:skip].size} skip",
+        "#{decisions[:auto_read].size} auto-read"
       ].join(", ")
     end
 
     RECAP_HEADINGS = {
-      unsub: "Unsubscribed",
-      done:  "Marked done",
-      keep:  "Kept",
-      trash: "Trashed only",
-      skip:  "Skipped"
+      unsub:     "Unsubscribed",
+      done:      "Marked done",
+      keep:      "Kept",
+      trash:     "Trashed only",
+      skip:      "Skipped",
+      auto_read: "Marked auto-read"
     }.freeze
 
     def print_recap(decisions, total_trashed, processed, total, io)

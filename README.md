@@ -89,6 +89,31 @@ for batch ops when you already know what you want done.
 **Pattern** (for the batch commands): substring on the email address
 (case-insensitive), or `@domain.com` for an exact-domain match.
 
+### Auto-read senders
+
+Senders you want to keep receiving but never see as unread (statements,
+receipts, low-priority notifications). Triage them once with `r` (this
+address) or `R` (whole domain), then sync to Gmail:
+
+```
+email_cleaner auto-read list
+email_cleaner auto-read add a@x.com
+email_cleaner auto-read add @chase.com
+email_cleaner auto-read remove @chase.com
+email_cleaner auto-read sync     # creates/updates the managed Gmail filter
+email_cleaner auto-read status
+```
+
+The local list at `auto_read.yaml` is the source of truth. `sync`
+reconciles it to a single managed Gmail filter (delete + recreate,
+since Gmail filters are immutable).
+
+### Re-authorization note
+
+This release adds the `gmail.settings.basic` OAuth scope (required for
+filter creation). If you're upgrading, delete `token.yaml` and re-run
+any command — you'll be prompted to re-authorize once.
+
 ### Other commands
 
 `audit` — survey-only, no actions. Good for getting a feel for what's

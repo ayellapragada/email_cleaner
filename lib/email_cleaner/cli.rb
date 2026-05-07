@@ -9,6 +9,8 @@ require_relative "keep_command"
 require_relative "trash_command"
 require_relative "triage_command"
 require_relative "unsubscribe_command"
+require_relative "auto_read_command"
+require_relative "gmail_filter"
 
 module EmailCleaner
   module CLI
@@ -23,6 +25,7 @@ module EmailCleaner
         email_cleaner unsubscribe <pattern> [--days N] [--yes]
         email_cleaner keep        <pattern> [--days N] [--for DAYS] [--yes]
         email_cleaner trash       <pattern> [--days N] [--yes]
+        email_cleaner auto-read   list|add|remove|sync|status [args...]
         email_cleaner --help
 
       Pattern: substring on email address (case-insensitive),
@@ -43,6 +46,7 @@ module EmailCleaner
       when "unsubscribe"  then run_unsubscribe(argv)
       when "keep"         then run_keep(argv)
       when "trash"        then run_trash(argv)
+      when "auto-read"    then run_auto_read(argv)
       else
         warn "Unknown subcommand: #{subcmd}"
         warn USAGE
@@ -115,13 +119,25 @@ module EmailCleaner
         { days: EmailCleaner::DEFAULT_DAYS_WINDOW, min: EmailCleaner::DEFAULT_MIN_COUNT },
         "Usage: email_cleaner triage [options]"
       ) do |o, opts|
-        o.on("--days N", Integer) { |n| opts[:days] = n }
-        o.on("--min N", Integer)  { |n| opts[:min] = n }
+        o.on("--days N",  Integer) { |n| opts[:days]  = n }
+        o.on("--min N",   Integer) { |n| opts[:min]   = n }
       end
 
       config, service, state = build_context
       TriageCommand.run(
-        options: opts, gmail_service: service, state: state, log_path: config.triage_log_path
+        options: opts, gmail_service: service, state: state,
+        log_path: config.triage_log_path,
+        auto_read_path: config.auto_read_path
+      )
+    end
+
+    def run_auto_read(argv)
+      config, service, _ = build_context
+      gmail_filter = GmailFilter.new(service: service)
+      AutoReadCommand.run(
+        argv: argv,
+        state_path: config.auto_read_path,
+        gmail_filter: gmail_filter
       )
     end
 

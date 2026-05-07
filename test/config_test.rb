@@ -18,4 +18,10 @@ class ConfigTest < Minitest::Test
     assert_equal "/tmp/ec/trash.log", config.trash_log_path
     assert_equal "/tmp/ec/triage.log", config.triage_log_path
   end
+
+  def test_auto_read_path
+    c = EmailCleaner::Config.new(root: "/tmp/foo")
+    assert_equal "/tmp/foo/auto_read.yaml", c.auto_read_path
+  end
+
 end

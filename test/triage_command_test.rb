@@ -7,6 +7,7 @@ require "fileutils"
 require "date"
 require "email_cleaner/triage_command"
 require "email_cleaner/state"
+require "email_cleaner/auto_read_state"
 
 class TriageCommandTest < Minitest::Test
   FakeService = TestSupport::FakeGmailService
@@ -33,6 +34,7 @@ class TriageCommandTest < Minitest::Test
     EmailCleaner::TriageCommand.run(
       options: { days: 30, min: 3 },
       gmail_service: svc, state: @state, log_path: @log,
+      auto_read_path: File.join(@tmp, "auto_read.yaml"),
       io: StringIO.new, stdin: StringIO.new(stdin_input), progress: StringIO.new
     )
   end
@@ -146,6 +148,7 @@ class TriageCommandTest < Minitest::Test
     EmailCleaner::TriageCommand.run(
       options: { days: 30, min: 3 },
       gmail_service: svc, state: @state, log_path: @log,
+      auto_read_path: File.join(@tmp, "auto_read.yaml"),
       io: out, stdin: StringIO.new("k\nq\n"), progress: StringIO.new
     )
     # 3 + 5 = 8 total messages across 2 senders.
@@ -171,6 +174,7 @@ class TriageCommandTest < Minitest::Test
     EmailCleaner::TriageCommand.run(
       options: { days: 30, min: 3 },
       gmail_service: svc, state: @state, log_path: @log,
+      auto_read_path: File.join(@tmp, "auto_read.yaml"),
       io: out, stdin: StringIO.new("u\nk\ns\n"), progress: StringIO.new
     )
 
@@ -190,6 +194,7 @@ class TriageCommandTest < Minitest::Test
     EmailCleaner::TriageCommand.run(
       options: { days: 30, min: 3 },
       gmail_service: svc, state: @state, log_path: @log,
+      auto_read_path: File.join(@tmp, "auto_read.yaml"),
       io: out, stdin: StringIO.new("k\n"), progress: StringIO.new
     )
     s = out.string
@@ -204,6 +209,7 @@ class TriageCommandTest < Minitest::Test
     EmailCleaner::TriageCommand.run(
       options: { days: 30, min: 3 },
       gmail_service: svc, state: @state, log_path: @log,
+      auto_read_path: File.join(@tmp, "auto_read.yaml"),
       io: out, stdin: StringIO.new("xyz\nq\n"), progress: StringIO.new
     )
     assert_match(/unrecognized: 'xyz'/, out.string)
@@ -216,6 +222,7 @@ class TriageCommandTest < Minitest::Test
     rc = EmailCleaner::TriageCommand.run(
       options: { days: 30, min: 3 },
       gmail_service: svc, state: @state, log_path: @log,
+      auto_read_path: File.join(@tmp, "auto_read.yaml"),
       io: out, stdin: StringIO.new(""), progress: StringIO.new
     )
     assert_equal 0, rc
@@ -229,9 +236,45 @@ class TriageCommandTest < Minitest::Test
     rc = EmailCleaner::TriageCommand.run(
       options: { days: 30, min: 3 },
       gmail_service: svc, state: @state, log_path: @log,
+      auto_read_path: File.join(@tmp, "auto_read.yaml"),
       io: out, stdin: StringIO.new(""), progress: StringIO.new
     )
     assert_equal 0, rc
     assert_match(/Nothing to triage/i, out.string)
   end
+
+  def test_r_marks_address_as_auto_read_no_gmail_call
+    svc = FakeService.new(messages_by_id: actionable_msgs("a@x.com"))
+    auto_read_path = File.join(@tmp, "auto_read.yaml")
+    out = StringIO.new
+    rc = EmailCleaner::TriageCommand.run(
+      options: { days: 30, min: 3 },
+      gmail_service: svc, state: @state, log_path: @log,
+      auto_read_path: auto_read_path,
+      io: out, stdin: StringIO.new("r\nq\n"), progress: StringIO.new
+    )
+    assert_equal 0, rc
+    saved = EmailCleaner::AutoReadState.new(path: auto_read_path)
+    assert_equal ["a@x.com"], saved.addresses
+    assert_empty saved.domains
+    assert_empty svc.batch_calls # no trash
+    assert_match(/triage\tauto_read_addr\ta@x\.com/, File.read(@log))
+  end
+
+  def test_R_marks_domain_as_auto_read
+    svc = FakeService.new(messages_by_id: actionable_msgs("a@x.com"))
+    auto_read_path = File.join(@tmp, "auto_read.yaml")
+    rc = EmailCleaner::TriageCommand.run(
+      options: { days: 30, min: 3 },
+      gmail_service: svc, state: @state, log_path: @log,
+      auto_read_path: auto_read_path,
+      io: StringIO.new, stdin: StringIO.new("R\nq\n"), progress: StringIO.new
+    )
+    assert_equal 0, rc
+    saved = EmailCleaner::AutoReadState.new(path: auto_read_path)
+    assert_equal ["x.com"], saved.domains
+    assert_empty saved.addresses
+    assert_match(/triage\tauto_read_domain\tx\.com/, File.read(@log))
+  end
+
 end

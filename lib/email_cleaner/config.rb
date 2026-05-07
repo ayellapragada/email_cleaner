@@ -16,5 +16,6 @@ module EmailCleaner
     def log_path         = File.join(@root, "unsubscribe.log")
     def trash_log_path   = File.join(@root, "trash.log")
     def triage_log_path  = File.join(@root, "triage.log")
+    def auto_read_path        = File.join(@root, "auto_read.yaml")
   end
 end
