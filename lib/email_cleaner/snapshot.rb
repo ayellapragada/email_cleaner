@@ -2,6 +2,7 @@
 
 require_relative "aggregator"
 require_relative "gmail_client"
+require_relative "paced_fetcher"
 require_relative "pattern_matcher"
 require_relative "query_builder"
 
@@ -15,9 +16,19 @@ module EmailCleaner
 
     # For the audit subcommand: no pattern, no pre-filter; gets every
     # sender in the window so the table can show the full picture.
-    def all_senders(days:, gmail_service:, state:, progress:)
-      messages = fetch_messages(query: "newer_than:#{days}d",
-                                gmail_service: gmail_service, progress: progress)
+    # `query_override` lets chunked triage pass a custom date-window
+    # query (e.g. "after:2026/04/29 before:2026/05/06") instead of the
+    # default newer_than:Nd.
+    def all_senders(days:, gmail_service:, state:, progress:, query_override: nil)
+      messages = if query_override
+                   fetch_messages(query: query_override,
+                                  gmail_service: gmail_service, progress: progress)
+                 elsif days > PacedFetcher::FETCH_WINDOW_DAYS
+                   PacedFetcher.fetch(days: days, gmail_service: gmail_service, progress: progress)
+                 else
+                   fetch_messages(query: "newer_than:#{days}d",
+                                  gmail_service: gmail_service, progress: progress)
+                 end
       stats = Aggregator.group(messages)
       stats = Aggregator.drop_singletons(stats)
       state.annotate(stats)

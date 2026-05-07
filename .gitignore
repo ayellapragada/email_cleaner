@@ -1,3 +1,6 @@
+# Per User — never commit
+auto_read.yaml
+
 # OAuth + tool state — never commit
 credentials.json
 token.yaml
